@@ -116,10 +116,15 @@ jobs:
           mkdir -p staging
           VERSION_TAG="v${{ inputs.version }}"
           
-          # Find the built release APK
-          APK_FILE=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          echo "=== All APK outputs ==="
+          find android/app/build/outputs -name "*.apk" -type f 2>/dev/null || echo "No APKs found in outputs"
+          
+          # Search broadly for any release APK
+          APK_FILE=$(find android/app/build/outputs -name "*.apk" -type f | head -n 1)
           if [ -z "$APK_FILE" ]; then
-            echo "ERROR: No APK found in android/app/build/outputs/apk/release"
+            echo "ERROR: No APK found anywhere in android/app/build/outputs"
+            echo "=== Full outputs directory listing ==="
+            find android/app/build/outputs -type f 2>/dev/null || echo "outputs directory does not exist"
             exit 1
           fi
           
