@@ -50,6 +50,13 @@ jobs:
           ssh-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
           fetch-depth: 0
 
+      - name: "Setup Ccache for Native C/C++ Compilation"
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.abi }}-ccache-v1
+          max-size: "2000M"
+          create-symlink: true
+
       - name: "Setup Node.js 24 (LTS)"
         uses: actions/setup-node@v4
         with:
@@ -59,6 +66,14 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: "Cache Bun Dependencies Store"
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock', '**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: "Setup Java 17 (Temurin)"
         uses: actions/setup-java@v5
@@ -94,7 +109,7 @@ jobs:
         timeout-minutes: 45
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --build-cache --parallel ${{ matrix.flags }} -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
+          ./gradlew assembleRelease --build-cache --parallel ${{ matrix.flags }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
 
       - name: "Package APK Artifact"
         run: |
