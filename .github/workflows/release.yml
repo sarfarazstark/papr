@@ -91,7 +91,7 @@ jobs:
 
       - name: "Compile ${{ matrix.abi }} Release APK"
         working-directory: android
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           chmod +x ./gradlew
           ./gradlew assembleRelease --build-cache --parallel ${{ matrix.flags }} -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
