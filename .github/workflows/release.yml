@@ -21,7 +21,11 @@ jobs:
   build-and-release:
     name: "Build 5 Production APKs & Publish Release"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 25
+
+    env:
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
+      _JAVA_OPTIONS: "-Xmx6144m"
 
     steps:
       - name: "Configure SSH Agent for Private Repo Access"
@@ -36,10 +40,10 @@ jobs:
           ssh-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
           fetch-depth: 0
 
-      - name: "Setup Node.js 20"
+      - name: "Setup Node.js 22"
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: "Setup Bun Toolchain"
         uses: oven-sh/setup-bun@v2
@@ -47,7 +51,7 @@ jobs:
           bun-version: latest
 
       - name: "Setup Java 17 (Temurin)"
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: 17
@@ -56,6 +60,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: "Install Android NDK and CMake"
+        timeout-minutes: 5
         run: |
           yes | sdkmanager --licenses
           sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
@@ -74,15 +79,16 @@ jobs:
           npx expo prebuild --platform android --no-install
 
       - name: "Setup Gradle Build Cache"
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
 
       - name: "Compile Android Production Release APKs"
         working-directory: android
+        timeout-minutes: 12
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --build-cache --parallel -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
+          ./gradlew assembleRelease --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
 
       - name: "Collect and Organize APK Artifacts"
         run: |
@@ -114,36 +120,48 @@ jobs:
           cd dist/release-apks
           sha256sum *.apk > checksums.txt
           cat checksums.txt
-          cd ../..
 
       - name: "Generate Release Notes"
         id: release_notes
         run: |
-          VERSION_TAG="v${{ inputs.version }}"
-          cat << 'EOF' > release_body.md
-          ## 🚀 Papr ${{ inputs.version }}
+          VERSION="${{ inputs.version }}"
+          CUSTOM_NOTES="${{ inputs.custom_notes }}"
           
-          Privacy-first, 100% offline mobile PDF & document utility application for Android.
-          
-          ### 📦 Download Packages
-          
-          | Architecture | Package | File Size | Description |
-          | :--- | :--- | :--- | :--- |
-          | **ARM64-v8a** *(Recommended)* | [`papr-${{ inputs.version }}-arm64-v8a.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-arm64-v8a.apk) | ~79 MB | Modern 64-bit Android devices (Samsung, Pixel, OnePlus, Xiaomi, Oppo) |
-          | **Universal** | [`papr-${{ inputs.version }}-universal.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-universal.apk) | ~214 MB | Complete all-in-one package for any Android device |
-          | **ARMeabi-v7a** | [`papr-${{ inputs.version }}-armeabi-v7a.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-armeabi-v7a.apk) | ~62 MB | 32-bit legacy Android smartphones |
-          | **x86_64** | [`papr-${{ inputs.version }}-x86_64.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-x86_64.apk) | ~81 MB | 64-bit Android emulators & ChromeOS |
-          | **x86** | [`papr-${{ inputs.version }}-x86.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-x86.apk) | ~76 MB | 32-bit Android emulators |
-          
-          ### 🔒 Privacy & Local Processing
-          - **100% Offline:** All document operations run locally on device CPU/NPU with zero internet access or tracking.
-          - **Zero Telemetry:** No analytics, no accounts, and no data leaves your phone.
-          
-          EOF
-          
-          if [ -n "${{ inputs.custom_notes }}" ]; then
-            echo -e "\n### 🌟 Highlights\n${{ inputs.custom_notes }}" >> release_body.md
+          # Generate structured notes from git commits
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)")
+          else
+            COMMITS=$(git log -n 25 --pretty=format:"* %s (%h)")
           fi
+
+          cat << 'EOF' > release_body.md
+          ## 📦 Papr v${VERSION} Release
+
+          **Papr** is a 100% offline, privacy-first mobile PDF and document powerhouse.
+
+          ### 📱 Download for your Architecture:
+          - 🚀 **`papr-v${VERSION}-arm64-v8a.apk`** — Recommended for 99% of modern Android devices.
+          - ⚡ **`papr-v${VERSION}-universal.apk`** — Works on all Android devices (larger size).
+          - 📱 **`papr-v${VERSION}-armeabi-v7a.apk`** — Older 32-bit ARM phones.
+          - 💻 **`papr-v${VERSION}-x86_64.apk`** — ChromeOS / Android Emulators.
+          - 💻 **`papr-v${VERSION}-x86.apk`** — 32-bit x86 emulators.
+
+          EOF
+
+          if [ -n "$CUSTOM_NOTES" ]; then
+            echo -e "\n### 🌟 Highlights\n${CUSTOM_NOTES}\n" >> release_body.md
+          fi
+
+          cat << 'EOF' >> release_body.md
+
+          ### 🔒 Checksums (SHA-256)
+          ```text
+          EOF
+          cat dist/release-apks/checksums.txt >> release_body.md
+          echo "```" >> release_body.md
+
+          cat release_body.md
 
       - name: "Publish GitHub Release on Public Repository"
         uses: softprops/action-gh-release@v2
@@ -152,7 +170,8 @@ jobs:
           name: "Papr v${{ inputs.version }}"
           body_path: release_body.md
           files: |
-            dist/release-apks/*
+            dist/release-apks/*.apk
+            dist/release-apks/checksums.txt
           draft: false
           prerelease: false
         env:
