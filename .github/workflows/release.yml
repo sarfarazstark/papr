@@ -109,7 +109,7 @@ jobs:
         timeout-minutes: 45
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --build-cache --parallel ${{ matrix.flags }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
+          ./gradlew assembleRelease --build-cache --parallel ${{ matrix.flags }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_BUILD_TYPE=Release -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true -Pandroid.enableNativeSymbolStripping=true
 
       - name: "Package APK Artifact"
         run: |
@@ -117,14 +117,23 @@ jobs:
           VERSION_TAG="v${{ inputs.version }}"
           
           echo "=== All APK outputs ==="
-          find android/app/build/outputs -name "*.apk" -type f 2>/dev/null || echo "No APKs found in outputs"
+          find android/app/build/outputs -name "*.apk" -type f 2>/dev/null || echo "No APKs found"
           
-          # Search broadly for any release APK
-          APK_FILE=$(find android/app/build/outputs -name "*.apk" -type f | head -n 1)
+          # Match specific architecture APK
+          if [ "${{ matrix.abi }}" = "universal" ]; then
+            APK_FILE=$(find android/app/build/outputs -name "*universal*.apk" -type f | head -n 1)
+          else
+            APK_FILE=$(find android/app/build/outputs -name "*${{ matrix.abi }}*.apk" -type f | head -n 1)
+          fi
+          
+          # Fallback if specific name didn't match
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find android/app/build/outputs -name "*.apk" -type f | head -n 1)
+          fi
+          
           if [ -z "$APK_FILE" ]; then
             echo "ERROR: No APK found anywhere in android/app/build/outputs"
-            echo "=== Full outputs directory listing ==="
-            find android/app/build/outputs -type f 2>/dev/null || echo "outputs directory does not exist"
+            find android/app/build/outputs -type f 2>/dev/null || echo "outputs directory empty"
             exit 1
           fi
           
