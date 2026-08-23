@@ -1,0 +1,159 @@
+name: "Papr Cloud Release Build"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release Version (e.g. 0.5.2 or 0.6.0)"
+        required: true
+        type: string
+        default: "0.5.2"
+      custom_notes:
+        description: "Optional custom release highlights"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: "Build 5 Production APKs & Publish Release"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: "Configure SSH Agent for Private Repo Access"
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
+
+      - name: "Checkout Private Source Repository (papr-core)"
+        uses: actions/checkout@v4
+        with:
+          repository: "sarfarazstark/papr-core"
+          ssh-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
+          fetch-depth: 0
+
+      - name: "Setup Node.js 20"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: "Setup Bun Toolchain"
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: "Setup Java 17 (Temurin)"
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: 17
+
+      - name: "Setup Android NDK & SDK"
+        uses: android-actions/setup-android@v3
+
+      - name: "Install Android NDK and CMake"
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: "Install Node Dependencies"
+        run: bun install --frozen-lockfile
+
+      - name: "Run Lint, TypeCheck & Unit Tests"
+        run: |
+          bun run check
+          bun run typecheck
+          bun test
+
+      - name: "Synchronize Native Android Configuration via Expo Prebuild"
+        run: |
+          npx expo prebuild --platform android --no-install
+
+      - name: "Setup Gradle Build Cache"
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-read-only: false
+
+      - name: "Compile Android Production Release APKs"
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --build-cache --parallel -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
+
+      - name: "Collect and Organize APK Artifacts"
+        run: |
+          mkdir -p dist/release-apks
+          VERSION_TAG="v${{ inputs.version }}"
+          
+          # Copy all generated split APKs and rename nicely
+          find android/app/build/outputs/apk/release -name "*.apk" | while read -r apk_file; do
+            filename=$(basename "$apk_file")
+            # Determine architecture from filename
+            if [[ "$filename" == *"arm64-v8a"* ]]; then
+              dest="dist/release-apks/papr-${VERSION_TAG}-arm64-v8a.apk"
+            elif [[ "$filename" == *"armeabi-v7a"* ]]; then
+              dest="dist/release-apks/papr-${VERSION_TAG}-armeabi-v7a.apk"
+            elif [[ "$filename" == *"x86_64"* ]]; then
+              dest="dist/release-apks/papr-${VERSION_TAG}-x86_64.apk"
+            elif [[ "$filename" == *"x86"* ]]; then
+              dest="dist/release-apks/papr-${VERSION_TAG}-x86.apk"
+            elif [[ "$filename" == *"universal"* ]]; then
+              dest="dist/release-apks/papr-${VERSION_TAG}-universal.apk"
+            else
+              dest="dist/release-apks/papr-${VERSION_TAG}-${filename}"
+            fi
+            cp "$apk_file" "$dest"
+            echo "Organized: $dest ($(du -h "$dest" | cut -f1))"
+          done
+
+          # Generate SHA-256 Checksums
+          cd dist/release-apks
+          sha256sum *.apk > checksums.txt
+          cat checksums.txt
+          cd ../..
+
+      - name: "Generate Release Notes"
+        id: release_notes
+        run: |
+          VERSION_TAG="v${{ inputs.version }}"
+          cat << 'EOF' > release_body.md
+          ## 🚀 Papr ${{ inputs.version }}
+          
+          Privacy-first, 100% offline mobile PDF & document utility application for Android.
+          
+          ### 📦 Download Packages
+          
+          | Architecture | Package | File Size | Description |
+          | :--- | :--- | :--- | :--- |
+          | **ARM64-v8a** *(Recommended)* | [`papr-${{ inputs.version }}-arm64-v8a.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-arm64-v8a.apk) | ~79 MB | Modern 64-bit Android devices (Samsung, Pixel, OnePlus, Xiaomi, Oppo) |
+          | **Universal** | [`papr-${{ inputs.version }}-universal.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-universal.apk) | ~214 MB | Complete all-in-one package for any Android device |
+          | **ARMeabi-v7a** | [`papr-${{ inputs.version }}-armeabi-v7a.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-armeabi-v7a.apk) | ~62 MB | 32-bit legacy Android smartphones |
+          | **x86_64** | [`papr-${{ inputs.version }}-x86_64.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-x86_64.apk) | ~81 MB | 64-bit Android emulators & ChromeOS |
+          | **x86** | [`papr-${{ inputs.version }}-x86.apk`](https://github.com/sarfarazstark/papr/releases/download/${{ inputs.version }}/papr-${{ inputs.version }}-x86.apk) | ~76 MB | 32-bit Android emulators |
+          
+          ### 🔒 Privacy & Local Processing
+          - **100% Offline:** All document operations run locally on device CPU/NPU with zero internet access or tracking.
+          - **Zero Telemetry:** No analytics, no accounts, and no data leaves your phone.
+          
+          EOF
+          
+          if [ -n "${{ inputs.custom_notes }}" ]; then
+            echo -e "\n### 🌟 Highlights\n${{ inputs.custom_notes }}" >> release_body.md
+          fi
+
+      - name: "Publish GitHub Release on Public Repository"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ inputs.version }}"
+          name: "Papr v${{ inputs.version }}"
+          body_path: release_body.md
+          files: |
+            dist/release-apks/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
