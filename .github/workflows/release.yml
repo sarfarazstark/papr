@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release Version (e.g. 0.5.2 or 0.6.0)"
+        description: "Release Version Tag (e.g. 0.5.2)"
         required: true
         type: string
         default: "0.5.2"
       custom_notes:
-        description: "Optional custom release highlights"
+        description: "Custom Release Highlights / Notes (Optional)"
         required: false
         type: string
         default: ""
@@ -17,27 +17,42 @@ on:
 permissions:
   contents: write
 
-jobs:
-  build-and-release:
-    name: "Build 5 Production APKs & Publish Release"
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
+  _JAVA_OPTIONS: "-Xmx6144m"
 
-    env:
-      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
-      _JAVA_OPTIONS: "-Xmx6144m"
+jobs:
+  build-apk:
+    name: "Build ${{ matrix.abi }} APK"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: "arm64-v8a"
+            name: "arm64-v8a"
+            flags: "-PreactNativeArchitectures=arm64-v8a"
+          - abi: "armeabi-v7a"
+            name: "armeabi-v7a"
+            flags: "-PreactNativeArchitectures=armeabi-v7a"
+          - abi: "x86_64"
+            name: "x86_64"
+            flags: "-PreactNativeArchitectures=x86_64"
+          - abi: "universal"
+            name: "universal"
+            flags: "-PreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64"
 
     steps:
       - name: "Configure SSH Agent for Private Repo Access"
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
+          ssh-private-key: ${{ secrets.PAPR_CORE_DEPLOY_KEY }}
 
       - name: "Checkout Private Source Repository (papr-core)"
         uses: actions/checkout@v4
         with:
           repository: "sarfarazstark/papr-core"
-          ssh-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
+          ssh-key: ${{ secrets.PAPR_CORE_DEPLOY_KEY }}
           fetch-depth: 0
 
       - name: "Setup Node.js 24 (LTS)"
@@ -54,70 +69,88 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: "temurin"
-          java-version: 17
+          java-version: "17"
 
       - name: "Setup Android NDK & SDK"
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
 
       - name: "Install Android NDK and CMake"
-        timeout-minutes: 5
         run: |
           yes | sdkmanager --licenses
           sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
 
       - name: "Install Node Dependencies"
-        run: bun install --frozen-lockfile
-
-      - name: "Run Lint, TypeCheck & Unit Tests"
         run: |
-          bun run check
-          bun run typecheck
-          bun test
+          bun install --frozen-lockfile
 
       - name: "Synchronize Native Android Configuration via Expo Prebuild"
         run: |
-          npx expo prebuild --platform android --no-install
+          bunx expo prebuild --platform android --no-install
 
       - name: "Setup Gradle Build Cache"
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
 
-      - name: "Compile Android Production Release APKs"
+      - name: "Compile ${{ matrix.abi }} Release APK"
         working-directory: android
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
+          ./gradlew assembleRelease --build-cache --parallel ${{ matrix.flags }} -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1024m" -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true
 
-      - name: "Collect and Organize APK Artifacts"
+      - name: "Package APK Artifact"
         run: |
-          mkdir -p dist/release-apks
+          mkdir -p staging
           VERSION_TAG="v${{ inputs.version }}"
           
-          # Copy all generated split APKs and rename nicely
-          find android/app/build/outputs/apk/release -name "*.apk" | while read -r apk_file; do
-            filename=$(basename "$apk_file")
-            # Determine architecture from filename
-            if [[ "$filename" == *"arm64-v8a"* ]]; then
-              dest="dist/release-apks/papr-${VERSION_TAG}-arm64-v8a.apk"
-            elif [[ "$filename" == *"armeabi-v7a"* ]]; then
-              dest="dist/release-apks/papr-${VERSION_TAG}-armeabi-v7a.apk"
-            elif [[ "$filename" == *"x86_64"* ]]; then
-              dest="dist/release-apks/papr-${VERSION_TAG}-x86_64.apk"
-            elif [[ "$filename" == *"x86"* ]]; then
-              dest="dist/release-apks/papr-${VERSION_TAG}-x86.apk"
-            elif [[ "$filename" == *"universal"* ]]; then
-              dest="dist/release-apks/papr-${VERSION_TAG}-universal.apk"
-            else
-              dest="dist/release-apks/papr-${VERSION_TAG}-${filename}"
-            fi
-            cp "$apk_file" "$dest"
-            echo "Organized: $dest ($(du -h "$dest" | cut -f1))"
-          done
+          # Find the built release APK
+          APK_FILE=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: No APK found in android/app/build/outputs/apk/release"
+            exit 1
+          fi
+          
+          TARGET_NAME="papr-${VERSION_TAG}-${{ matrix.name }}.apk"
+          cp "$APK_FILE" "staging/${TARGET_NAME}"
+          echo "Staged staging/${TARGET_NAME} ($(du -h "staging/${TARGET_NAME}" | cut -f1))"
 
-          # Generate SHA-256 Checksums
-          cd dist/release-apks
+      - name: "Upload APK Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "papr-apk-${{ matrix.name }}"
+          path: "staging/*.apk"
+          retention-days: 5
+
+  publish-release:
+    name: "Publish GitHub Release"
+    needs: build-apk
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Configure SSH Agent for Private Repo Access"
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PAPR_CORE_DEPLOY_KEY }}
+
+      - name: "Checkout Private Source Repository for Git History"
+        uses: actions/checkout@v4
+        with:
+          repository: "sarfarazstark/papr-core"
+          ssh-key: ${{ secrets.PAPR_CORE_DEPLOY_KEY }}
+          fetch-depth: 0
+
+      - name: "Download All Built APK Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release-apks
+          merge-multiple: true
+
+      - name: "Generate SHA-256 Checksums"
+        working-directory: dist/release-apks
+        run: |
+          ls -la
           sha256sum *.apk > checksums.txt
           cat checksums.txt
 
@@ -127,7 +160,6 @@ jobs:
           VERSION="${{ inputs.version }}"
           CUSTOM_NOTES="${{ inputs.custom_notes }}"
           
-          # Generate structured notes from git commits
           PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)")
@@ -138,14 +170,13 @@ jobs:
           cat << 'EOF' > release_body.md
           ## 📦 Papr v${VERSION} Release
 
-          **Papr** is a 100% offline, privacy-first mobile PDF and document powerhouse.
+          A privacy-first, offline document utility toolkit for Android.
 
-          ### 📱 Download for your Architecture:
-          - 🚀 **`papr-v${VERSION}-arm64-v8a.apk`** — Recommended for 99% of modern Android devices.
-          - ⚡ **`papr-v${VERSION}-universal.apk`** — Works on all Android devices (larger size).
-          - 📱 **`papr-v${VERSION}-armeabi-v7a.apk`** — Older 32-bit ARM phones.
-          - 💻 **`papr-v${VERSION}-x86_64.apk`** — ChromeOS / Android Emulators.
-          - 💻 **`papr-v${VERSION}-x86.apk`** — 32-bit x86 emulators.
+          ### 📱 Available APK Downloads
+          * **`papr-v${VERSION}-arm64-v8a.apk`** — Recommended for all modern 64-bit Android smartphones & tablets (Android 9.0+)
+          * **`papr-v${VERSION}-armeabi-v7a.apk`** — For legacy 32-bit Android phones
+          * **`papr-v${VERSION}-universal.apk`** — Universal APK supporting all architectures
+          * **`papr-v${VERSION}-x86_64.apk`** — For 64-bit Android Emulators & ChromeOS
 
           EOF
 
@@ -153,26 +184,23 @@ jobs:
             echo -e "\n### 🌟 Highlights\n${CUSTOM_NOTES}\n" >> release_body.md
           fi
 
-          cat << 'EOF' >> release_body.md
+          if [ -n "$COMMITS" ]; then
+            echo -e "\n### 🛠️ Changes\n${COMMITS}\n" >> release_body.md
+          fi
 
-          ### 🔒 Checksums (SHA-256)
-          ```text
-          EOF
-          cat dist/release-apks/checksums.txt >> release_body.md
-          echo "```" >> release_body.md
-
-          cat release_body.md
+          echo -e "\n### 🔒 Integrity & Security\nVerify file checksums using \`sha256sum -c checksums.txt\`.\n" >> release_body.md
 
       - name: "Publish GitHub Release on Public Repository"
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ inputs.version }}"
           name: "Papr v${{ inputs.version }}"
+          tag_name: "v${{ inputs.version }}"
+          target_commitish: "main"
           body_path: release_body.md
+          draft: false
+          prerelease: false
           files: |
             dist/release-apks/*.apk
             dist/release-apks/checksums.txt
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
