@@ -40,10 +40,10 @@ jobs:
           ssh-key: ${{ secrets.PAPR_CORE_SSH_KEY }}
           fetch-depth: 0
 
-      - name: "Setup Node.js 22"
+      - name: "Setup Node.js 24 (LTS)"
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: "Setup Bun Toolchain"
         uses: oven-sh/setup-bun@v2
