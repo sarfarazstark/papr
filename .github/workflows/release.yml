@@ -186,28 +186,30 @@ jobs:
             COMMITS=$(git log -n 25 --pretty=format:"* %s (%h)")
           fi
 
-          cat << EOF > release_body.md
-## 📦 Papr v${VERSION} Release
-
-A privacy-first, offline document utility toolkit for Android.
-
-### 📱 Available APK Downloads
-* **\`papr-v${VERSION}-arm64-v8a.apk\`** — Recommended for all modern 64-bit Android smartphones & tablets (Android 9.0+)
-* **\`papr-v${VERSION}-armeabi-v7a.apk\`** — For legacy 32-bit Android phones
-* **\`papr-v${VERSION}-universal.apk\`** — Universal APK supporting all architectures
-* **\`papr-v${VERSION}-x86_64.apk\`** — For 64-bit Android Emulators & ChromeOS
-
-EOF
-
-          if [ -n "$CUSTOM_NOTES" ]; then
-            echo -e "\n### 🌟 Highlights\n${CUSTOM_NOTES}\n" >> release_body.md
-          fi
-
-          if [ -n "$COMMITS" ]; then
-            echo -e "\n### 🛠️ Changes\n${COMMITS}\n" >> release_body.md
-          fi
-
-          echo -e "\n### 🔒 Integrity & Security\nVerify file checksums using \`sha256sum -c checksums.txt\`.\n" >> release_body.md
+          {
+            echo "## 📦 Papr v${VERSION} Release"
+            echo ""
+            echo "A privacy-first, offline document utility toolkit for Android."
+            echo ""
+            echo "### 📱 Available APK Downloads"
+            echo "* **\`papr-v${VERSION}-arm64-v8a.apk\`** — Recommended for all modern 64-bit Android smartphones & tablets (Android 9.0+)"
+            echo "* **\`papr-v${VERSION}-armeabi-v7a.apk\`** — For legacy 32-bit Android phones"
+            echo "* **\`papr-v${VERSION}-universal.apk\`** — Universal APK supporting all architectures"
+            echo "* **\`papr-v${VERSION}-x86_64.apk\`** — For 64-bit Android Emulators & ChromeOS"
+            echo ""
+            if [ -n "$CUSTOM_NOTES" ]; then
+              echo "### 🌟 Highlights"
+              echo "${CUSTOM_NOTES}"
+              echo ""
+            fi
+            if [ -n "$COMMITS" ]; then
+              echo "### 🛠️ Changes"
+              echo "${COMMITS}"
+              echo ""
+            fi
+            echo "### 🔒 Integrity & Security"
+            echo "Verify file checksums using \`sha256sum -c checksums.txt\`."
+          } > release_body.md
 
       - name: "Publish GitHub Release on Public Repository"
         uses: softprops/action-gh-release@v2
