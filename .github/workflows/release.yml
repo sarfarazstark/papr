@@ -186,18 +186,18 @@ jobs:
             COMMITS=$(git log -n 25 --pretty=format:"* %s (%h)")
           fi
 
-          cat << 'EOF' > release_body.md
-          ## 📦 Papr v${VERSION} Release
+          cat << EOF > release_body.md
+## 📦 Papr v${VERSION} Release
 
-          A privacy-first, offline document utility toolkit for Android.
+A privacy-first, offline document utility toolkit for Android.
 
-          ### 📱 Available APK Downloads
-          * **`papr-v${VERSION}-arm64-v8a.apk`** — Recommended for all modern 64-bit Android smartphones & tablets (Android 9.0+)
-          * **`papr-v${VERSION}-armeabi-v7a.apk`** — For legacy 32-bit Android phones
-          * **`papr-v${VERSION}-universal.apk`** — Universal APK supporting all architectures
-          * **`papr-v${VERSION}-x86_64.apk`** — For 64-bit Android Emulators & ChromeOS
+### 📱 Available APK Downloads
+* **\`papr-v${VERSION}-arm64-v8a.apk\`** — Recommended for all modern 64-bit Android smartphones & tablets (Android 9.0+)
+* **\`papr-v${VERSION}-armeabi-v7a.apk\`** — For legacy 32-bit Android phones
+* **\`papr-v${VERSION}-universal.apk\`** — Universal APK supporting all architectures
+* **\`papr-v${VERSION}-x86_64.apk\`** — For 64-bit Android Emulators & ChromeOS
 
-          EOF
+EOF
 
           if [ -n "$CUSTOM_NOTES" ]; then
             echo -e "\n### 🌟 Highlights\n${CUSTOM_NOTES}\n" >> release_body.md
