@@ -4,9 +4,11 @@
 
 Papr runs all PDF tools (30 tools including Merge, Split, Compress, AES-256 Lock/Unlock, Hardware OCR, Word/Excel Converters, Grayscale, Margin Adjustments, Watermark, and Document Scanner) **100% locally on your phone's CPU/NPU**. Zero cloud egress, zero analytics, and zero tracking.
 
+[![Papr Cloud Release Build](https://github.com/sarfarazstark/papr/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/sarfarazstark/papr/actions/workflows/release.yml)
 ---
 
 ## 📥 Download Latest Release
+
 
 Download the latest verified APK directly from [**GitHub Releases**](https://github.com/sarfarazstark/papr/releases/latest):
 
